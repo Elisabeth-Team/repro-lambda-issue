@@ -1,0 +1,7 @@
+name: repro-lambda-issue
+description: Reproduction of a lambda issue
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: venv
