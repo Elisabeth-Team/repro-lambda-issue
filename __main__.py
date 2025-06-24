@@ -7,12 +7,12 @@ config = pulumi.Config()
 env = config.get("project:environment")
 
 asset = pulumi.asset.AssetArchive({
-           # '.': pulumi.asset.FileArchive('./lambdas/worker'),
-            'config.yml': pulumi.asset.FileAsset(f'./configs/config.yml'),
-            ** {
-                f'schemas/{file_name}': pulumi.asset.FileAsset(f'./schemas/{file_name}')
-                for file_name in schemas
-            }
+           '.': pulumi.asset.FileArchive('./lambdas/worker'),
+            # 'config.yml': pulumi.asset.FileAsset(f'./configs/config.yml'),
+            # ** {
+            #     f'schemas/{file_name}': pulumi.asset.FileAsset(f'./schemas/{file_name}')
+            #     for file_name in schemas
+            # }
         })
 
 worker = aws.lambda_.Function(
