@@ -22,6 +22,6 @@ worker = aws.lambda_.Function(
         runtime='python3.9',
         role="arn:aws:iam::052848974346:role/delete-me-elisabeth", # from elsewhere
         handler='lambda_function.lambda_handler2',
-        source_code_hash=asset
+        code=asset
     )
 )
