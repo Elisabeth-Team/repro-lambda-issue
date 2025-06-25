@@ -2,64 +2,95 @@ import pulumi
 import pulumi_aws as aws
 import zipfile
 import os
-
-def create_zip_with_repro_zipfile(zip_filename, paths, preserve_structure=False):
+def create_ultra_deterministic_zip(zip_filename, paths, preserve_structure=False):
     """
-    Alternative implementation using repro-zipfile library for guaranteed determinism.
-    Install with: pip install repro-zipfile
+    Ultra-deterministic ZIP creation with maximum control over every byte.
+    This manually controls even more aspects of the ZIP format.
     """
-    try:
-        from repro_zipfile import ReproducibleZipFile
-    except ImportError:
-        print("repro-zipfile not installed. Install with: pip install repro-zipfile")
-        return None
-    
     # Sort paths for consistent ordering
     sorted_paths = sorted(paths)
     
-    with ReproducibleZipFile(zip_filename, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
-        all_files_to_add = []
-        
-        # First pass: collect all files
-        for path in sorted_paths:
-            if os.path.exists(path):
-                if os.path.isfile(path):
-                    if preserve_structure:
-                        arcname = os.path.normpath(path).replace(os.sep, '/')
-                        if os.name == 'nt' and len(arcname) > 1 and arcname[1] == ':':
-                            arcname = arcname[2:]
-                            if arcname.startswith('/'):
-                                arcname = arcname[1:]
-                    else:
-                        arcname = os.path.basename(path)
-                    all_files_to_add.append((path, arcname))
-                
-                elif os.path.isdir(path):
-                    for root, dirs, files in os.walk(path):
-                        dirs.sort(key=str.lower)
-                        files.sort(key=str.lower)
-                        
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            if preserve_structure:
-                                arcname = os.path.normpath(file_path).replace(os.sep, '/')
-                                if os.name == 'nt' and len(arcname) > 1 and arcname[1] == ':':
-                                    arcname = arcname[2:]
-                                    if arcname.startswith('/'):
-                                        arcname = arcname[1:]
-                            else:
-                                arcname = os.path.relpath(file_path, os.path.dirname(path))
-                                arcname = os.path.normpath(arcname).replace(os.sep, '/')
-                            all_files_to_add.append((file_path, arcname))
-        
-        # Sort and add files
-        all_files_to_add.sort(key=lambda x: x[1].lower())
+    # Collect all files first
+    all_files_to_add = []
+    
+    for path in sorted_paths:
+        if os.path.exists(path):
+            if os.path.isfile(path):
+                if preserve_structure:
+                    arcname = os.path.normpath(path).replace(os.sep, '/')
+                    if os.name == 'nt' and len(arcname) > 1 and arcname[1] == ':':
+                        arcname = arcname[2:]
+                        if arcname.startswith('/'):
+                            arcname = arcname[1:]
+                else:
+                    arcname = os.path.basename(path)
+                all_files_to_add.append((path, arcname))
+            
+            elif os.path.isdir(path):
+                for root, dirs, files in os.walk(path):
+                    dirs.sort(key=str.lower)
+                    files.sort(key=str.lower)
+                    
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if preserve_structure:
+                            arcname = os.path.normpath(file_path).replace(os.sep, '/')
+                            if os.name == 'nt' and len(arcname) > 1 and arcname[1] == ':':
+                                arcname = arcname[2:]
+                                if arcname.startswith('/'):
+                                    arcname = arcname[1:]
+                        else:
+                            arcname = os.path.relpath(file_path, os.path.dirname(path))
+                            arcname = os.path.normpath(arcname).replace(os.sep, '/')
+                        all_files_to_add.append((file_path, arcname))
+    
+    # Sort by archive name
+    all_files_to_add.sort(key=lambda x: x[1].lower())
+    
+    # Create ZIP with maximum determinism
+    with zipfile.ZipFile(zip_filename, 'w', 
+                        compression=zipfile.ZIP_DEFLATED,
+                        compresslevel=6,
+                        allowZip64=False) as zipf:
         
         for file_path, arcname in all_files_to_add:
-            zipf.write(file_path, arcname=arcname)
-            print(f"Added file: {file_path} -> {arcname}")
-    
-    return zip_filename
+            # Read and normalize file content
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+            
+            # Normalize line endings for text files
+            text_extensions = {'.txt', '.py', '.js', '.html', '.css', '.json', '.xml', '.yml', '.yaml', 
+                             '.md', '.rst', '.csv', '.sql', '.sh', '.bat', '.ps1', '.conf', '.cfg', '.ini'}
+            file_ext = os.path.splitext(file_path)[1].lower()
+            
+            if file_ext in text_extensions:
+                try:
+                    text_content = file_data.decode('utf-8', errors='ignore')
+                    normalized_content = text_content.replace('\r\n', '\n').replace('\r', '\n')
+                    file_data = normalized_content.encode('utf-8')
+                except (UnicodeDecodeError, UnicodeEncodeError):
+                    pass
+            
+            # Create ZipInfo with maximum control
+            zinfo = zipfile.ZipInfo(filename=arcname)
+            
+            # Set ALL metadata to fixed values
+            zinfo.date_time = (1980, 1, 1, 0, 0, 0)  # Fixed timestamp
+            zinfo.compress_type = zipfile.ZIP_DEFLATED
+            zinfo.file_size = len(file_data)
+            zinfo.external_attr = (0o644 & 0o777) << 16  # Fixed permissions
+            zinfo.create_system = 0  # MS-DOS
+            zinfo.extract_version = 20  # Version 2.0
+            zinfo.reserved = 0
+            zinfo.flag_bits = 0  # No flags
+            zinfo.volume = 0
+            zinfo.internal_attr = 0
+            zinfo.header_offset = 0
+            zinfo.CRC = zipfile.crc32(file_data) & 0xffffffff
+            
+            # Write with exact control
+            zipf.writestr(zinfo, file_data)
+            print(f"Added: {file_path} -> {arcname}")
 
 def create_lambda_zip():
     """Create a ZIP file for AWS Lambda deployment"""
@@ -71,7 +102,7 @@ def create_lambda_zip():
     ]
     
     zip_path = "lambda_deployment.zip"
-    create_zip_with_repro_zipfile(zip_path, paths_to_archive)
+    create_ultra_deterministic_zip(zip_path, paths_to_archive)
     return zip_path
 
 lambda_zip_path = create_lambda_zip()
