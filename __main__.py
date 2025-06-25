@@ -56,7 +56,7 @@ def create_lambda_zip():
     """Create a ZIP file for AWS Lambda deployment"""
     paths_to_archive = [
         "./lambdas/worker",           
-        "./configs/config.yml"      
+        "./configs/config.yml",      
         "./schemas/hi.txt",
         "./schemas/what.txt"
     ]
