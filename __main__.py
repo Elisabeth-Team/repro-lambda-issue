@@ -1,5 +1,7 @@
 import pulumi
 import pulumi_aws as aws
+import hashlib
+import base64
 
 schemas = ["hi.txt", "what.txt"]
 
@@ -15,9 +17,6 @@ asset = pulumi.asset.AssetArchive({
             }
         })
 
-hash = asset.__hash__()
-
-print(hash)
 worker = aws.lambda_.Function(
     resource_name='worker',
     args=aws.lambda_.FunctionArgs(
@@ -30,6 +29,4 @@ worker = aws.lambda_.Function(
     )
 )
 
-pulumi.export("hash1", worker.source_code_hash)
-
-pulumi.export("hash", hash)
+pulumi.export("hash", worker.source_code_hash)
