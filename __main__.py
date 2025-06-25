@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 import binascii
 
+
 def create_zip_with_multiple_files(zip_filename, paths, preserve_structure=False, deterministic=True):
     """
     Create a ZIP file containing multiple files and directories from different paths.
@@ -81,6 +82,27 @@ def create_zip_with_multiple_files(zip_filename, paths, preserve_structure=False
             with open(file_path, 'rb') as f:
                 file_data = f.read()
             
+            # Normalize line endings to LF only for text files (deterministic mode)
+            if deterministic:
+                # Detect if this is likely a text file
+                text_extensions = {'.txt', '.py', '.js', '.html', '.css', '.json', '.xml', '.yml', '.yaml', 
+                                 '.md', '.rst', '.csv', '.sql', '.sh', '.bat', '.ps1', '.conf', '.cfg', '.ini'}
+                file_ext = os.path.splitext(file_path)[1].lower()
+                
+                # Also check if content appears to be text (no null bytes in first 1024 bytes)
+                is_text_content = b'\x00' not in file_data[:1024] if file_data else True
+                
+                if file_ext in text_extensions or (is_text_content and len(file_data) < 1024*1024):  # < 1MB
+                    try:
+                        # Convert to text, normalize line endings, then back to bytes
+                        text_content = file_data.decode('utf-8', errors='ignore')
+                        # Replace CRLF and CR with LF
+                        normalized_content = text_content.replace('\r\n', '\n').replace('\r', '\n')
+                        file_data = normalized_content.encode('utf-8')
+                    except (UnicodeDecodeError, UnicodeEncodeError):
+                        # If encoding fails, treat as binary (don't modify)
+                        pass
+            
             # Create ZipInfo with fully normalized metadata
             zinfo = zipfile.ZipInfo(filename=arcname)
             
@@ -95,19 +117,24 @@ def create_zip_with_multiple_files(zip_filename, paths, preserve_structure=False
             
             # Set consistent file attributes regardless of OS
             if deterministic:
-                # Detect if file should be executable (by extension or current permissions)
-                executable_extensions = {'.sh', '.py', '.pl', '.rb', '.js', '.exe', '.bat', '.cmd'}
+                # More robust executable detection
+                executable_extensions = {'.sh', '.py', '.pl', '.rb', '.js', '.exe', '.bat', '.cmd', '.ps1'}
                 file_ext = os.path.splitext(file_path)[1].lower()
                 
-                # Check if file is executable by extension or current permissions
-                is_executable = (file_ext in executable_extensions or 
-                               (hasattr(os, 'access') and os.access(file_path, os.X_OK)))
+                # For deterministic builds, use consistent logic across all platforms
+                # Check file extension first, then fall back to content-based detection
+                is_executable = file_ext in executable_extensions
                 
+                # Additional check: if file starts with shebang, it's executable
+                if not is_executable and file_data.startswith(b'#!'):
+                    is_executable = True
+                
+                # Set consistent permissions
                 if is_executable:
-                    # Executable: 755
+                    # Executable: 755 (rwxr-xr-x)
                     zinfo.external_attr = (0o755 & 0o777) << 16
                 else:
-                    # Regular file: 644
+                    # Regular file: 644 (rw-r--r--)
                     zinfo.external_attr = (0o644 & 0o777) << 16
             else:
                 # Use actual file permissions
@@ -288,6 +315,7 @@ def analyze_zip_structure(zip_path):
     # Show first 128 bytes of ZIP file in hex
     print(f"\n=== First 128 bytes (hex) ===")
     print(binascii.hexlify(content[:128]).decode('ascii'))
+
 # Pulumi-specific usage examples:
 
 def create_lambda_zip():
@@ -299,7 +327,7 @@ def create_lambda_zip():
         "./schemas/what.txt"
     ]
     
-    zip_path = "lambda_deploymen_wint.zip"
+    zip_path = "lambda_deployment.zip"
     create_zip_with_multiple_files(zip_path, paths_to_archive, deterministic=True)
     return zip_path
 
