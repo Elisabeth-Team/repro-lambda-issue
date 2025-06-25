@@ -299,12 +299,13 @@ def create_lambda_zip():
         "./schemas/what.txt"
     ]
     
-    zip_path = "lambda_deployment.zip"
+    zip_path = "lambda_deploymen_wint.zip"
     create_zip_with_multiple_files(zip_path, paths_to_archive, deterministic=True)
     return zip_path
 
 lambda_zip_path = create_lambda_zip()
 
+compare_zip_files("lambda_deployment.zip", "lambda_deploymen_wint.zip")
 # Use in Pulumi Lambda function
 lambda_function = aws.lambda_.Function(
     "my-lambda",
