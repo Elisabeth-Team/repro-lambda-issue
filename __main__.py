@@ -207,54 +207,57 @@ def compare_zip_files(zip1_path, zip2_path):
             else:
                 print("✅ File lists match")
             
+            # Create lookup dictionary for ZIP 2 files
+            info2_dict = {info.filename: info for info in info2}
+            
             # Compare each file in detail
             print(f"\n=== File-by-file comparison ===")
-            for info1 in sorted(info1, key=lambda x: x.filename):
-                filename = info1.filename
-                info2 = next((i for i in info2 if i.filename == filename), None)
+            for info1_item in sorted(info1, key=lambda x: x.filename):
+                filename = info1_item.filename
+                info2_item = info2_dict.get(filename)
                 
-                if not info2:
+                if not info2_item:
                     print(f"❌ {filename}: Missing in ZIP 2")
                     continue
                 
                 print(f"\n📁 {filename}:")
                 
                 # Compare timestamps
-                if info1.date_time != info2.date_time:
-                    print(f"  ❌ Timestamps differ: {info1.date_time} vs {info2.date_time}")
+                if info1_item.date_time != info2_item.date_time:
+                    print(f"  ❌ Timestamps differ: {info1_item.date_time} vs {info2_item.date_time}")
                 else:
-                    print(f"  ✅ Timestamps match: {info1.date_time}")
+                    print(f"  ✅ Timestamps match: {info1_item.date_time}")
                 
                 # Compare file sizes
-                if info1.file_size != info2.file_size:
-                    print(f"  ❌ File sizes differ: {info1.file_size} vs {info2.file_size}")
+                if info1_item.file_size != info2_item.file_size:
+                    print(f"  ❌ File sizes differ: {info1_item.file_size} vs {info2_item.file_size}")
                 else:
-                    print(f"  ✅ File sizes match: {info1.file_size}")
+                    print(f"  ✅ File sizes match: {info1_item.file_size}")
                 
                 # Compare compressed sizes
-                if info1.compress_size != info2.compress_size:
-                    print(f"  ❌ Compressed sizes differ: {info1.compress_size} vs {info2.compress_size}")
+                if info1_item.compress_size != info2_item.compress_size:
+                    print(f"  ❌ Compressed sizes differ: {info1_item.compress_size} vs {info2_item.compress_size}")
                 else:
-                    print(f"  ✅ Compressed sizes match: {info1.compress_size}")
+                    print(f"  ✅ Compressed sizes match: {info1_item.compress_size}")
                 
                 # Compare CRC32
-                if info1.CRC != info2.CRC:
-                    print(f"  ❌ CRC32 differs: {info1.CRC:08x} vs {info2.CRC:08x}")
+                if info1_item.CRC != info2_item.CRC:
+                    print(f"  ❌ CRC32 differs: {info1_item.CRC:08x} vs {info2_item.CRC:08x}")
                 else:
-                    print(f"  ✅ CRC32 matches: {info1.CRC:08x}")
+                    print(f"  ✅ CRC32 matches: {info1_item.CRC:08x}")
                 
                 # Compare external attributes (permissions)
-                if info1.external_attr != info2.external_attr:
-                    print(f"  ❌ Permissions differ: {info1.external_attr:08x} vs {info2.external_attr:08x}")
-                    print(f"    Octal: {(info1.external_attr >> 16) & 0o777:o} vs {(info2.external_attr >> 16) & 0o777:o}")
+                if info1_item.external_attr != info2_item.external_attr:
+                    print(f"  ❌ Permissions differ: {info1_item.external_attr:08x} vs {info2_item.external_attr:08x}")
+                    print(f"    Octal: {(info1_item.external_attr >> 16) & 0o777:o} vs {(info2_item.external_attr >> 16) & 0o777:o}")
                 else:
-                    print(f"  ✅ Permissions match: {info1.external_attr:08x}")
+                    print(f"  ✅ Permissions match: {info1_item.external_attr:08x}")
                 
                 # Compare compression method
-                if info1.compress_type != info2.compress_type:
-                    print(f"  ❌ Compression methods differ: {info1.compress_type} vs {info2.compress_type}")
+                if info1_item.compress_type != info2_item.compress_type:
+                    print(f"  ❌ Compression methods differ: {info1_item.compress_type} vs {info2_item.compress_type}")
                 else:
-                    print(f"  ✅ Compression methods match: {info1.compress_type}")
+                    print(f"  ✅ Compression methods match: {info1_item.compress_type}")
                 
                 # Compare actual file content
                 try:
