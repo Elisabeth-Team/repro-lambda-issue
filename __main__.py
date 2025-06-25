@@ -2,324 +2,64 @@ import pulumi
 import pulumi_aws as aws
 import zipfile
 import os
-import hashlib
-import time
-from pathlib import Path
-import binascii
 
-
-def create_zip_with_multiple_files(zip_filename, paths, preserve_structure=False, deterministic=True):
+def create_zip_with_repro_zipfile(zip_filename, paths, preserve_structure=False):
     """
-    Create a ZIP file containing multiple files and directories from different paths.
-    Ensures IDENTICAL output across different operating systems, including Windows.
+    Alternative implementation using repro-zipfile library for guaranteed determinism.
+    Install with: pip install repro-zipfile
+    """
+    try:
+        from repro_zipfile import ReproducibleZipFile
+    except ImportError:
+        print("repro-zipfile not installed. Install with: pip install repro-zipfile")
+        return None
     
-    Args:
-        zip_filename (str): Name of the output ZIP file
-        paths (list): List of file and/or directory paths to include
-        preserve_structure (bool): Whether to preserve directory structure in ZIP
-        deterministic (bool): Whether to create deterministic/reproducible ZIP files
-    """
     # Sort paths for consistent ordering
     sorted_paths = sorted(paths)
     
-    # Use specific ZIP compression settings for consistency
-    with zipfile.ZipFile(zip_filename, 'w', 
-                        compression=zipfile.ZIP_DEFLATED,
-                        compresslevel=6,
-                        allowZip64=False) as zipf:
-        
+    with ReproducibleZipFile(zip_filename, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
         all_files_to_add = []
         
-        # First pass: collect all files and their info
+        # First pass: collect all files
         for path in sorted_paths:
             if os.path.exists(path):
                 if os.path.isfile(path):
-                    # Handle individual files
                     if preserve_structure:
-                        # Normalize path separators and remove drive letters (Windows)
                         arcname = os.path.normpath(path).replace(os.sep, '/')
                         if os.name == 'nt' and len(arcname) > 1 and arcname[1] == ':':
-                            arcname = arcname[2:]  # Remove C: prefix on Windows
+                            arcname = arcname[2:]
                             if arcname.startswith('/'):
-                                arcname = arcname[1:]  # Remove leading slash
+                                arcname = arcname[1:]
                     else:
                         arcname = os.path.basename(path)
-                    
                     all_files_to_add.append((path, arcname))
                 
                 elif os.path.isdir(path):
-                    # Handle directories - recursively collect all files
                     for root, dirs, files in os.walk(path):
-                        # Sort for consistent ordering (case-insensitive for Windows)
                         dirs.sort(key=str.lower)
                         files.sort(key=str.lower)
                         
                         for file in files:
                             file_path = os.path.join(root, file)
-                            
                             if preserve_structure:
-                                # Normalize and remove Windows drive letters
                                 arcname = os.path.normpath(file_path).replace(os.sep, '/')
                                 if os.name == 'nt' and len(arcname) > 1 and arcname[1] == ':':
-                                    arcname = arcname[2:]  # Remove C: prefix
+                                    arcname = arcname[2:]
                                     if arcname.startswith('/'):
-                                        arcname = arcname[1:]  # Remove leading slash
+                                        arcname = arcname[1:]
                             else:
-                                # Create relative path from the original directory
                                 arcname = os.path.relpath(file_path, os.path.dirname(path))
                                 arcname = os.path.normpath(arcname).replace(os.sep, '/')
-                            
                             all_files_to_add.append((file_path, arcname))
-            else:
-                print(f"Warning: Path not found: {path}")
         
-        # Sort files by archive name for consistent ordering (case-insensitive)
+        # Sort and add files
         all_files_to_add.sort(key=lambda x: x[1].lower())
         
-        # Second pass: add files to ZIP with completely consistent metadata
         for file_path, arcname in all_files_to_add:
-            # Read file content in binary mode to avoid line ending issues
-            with open(file_path, 'rb') as f:
-                file_data = f.read()
-            
-            # Normalize line endings to LF only for text files (deterministic mode)
-            if deterministic:
-                # Detect if this is likely a text file
-                text_extensions = {'.txt', '.py', '.js', '.html', '.css', '.json', '.xml', '.yml', '.yaml', 
-                                 '.md', '.rst', '.csv', '.sql', '.sh', '.bat', '.ps1', '.conf', '.cfg', '.ini'}
-                file_ext = os.path.splitext(file_path)[1].lower()
-                
-                # Also check if content appears to be text (no null bytes in first 1024 bytes)
-                is_text_content = b'\x00' not in file_data[:1024] if file_data else True
-                
-                if file_ext in text_extensions or (is_text_content and len(file_data) < 1024*1024):  # < 1MB
-                    try:
-                        # Convert to text, normalize line endings, then back to bytes
-                        text_content = file_data.decode('utf-8', errors='ignore')
-                        # Replace CRLF and CR with LF
-                        normalized_content = text_content.replace('\r\n', '\n').replace('\r', '\n')
-                        file_data = normalized_content.encode('utf-8')
-                    except (UnicodeDecodeError, UnicodeEncodeError):
-                        # If encoding fails, treat as binary (don't modify)
-                        pass
-            
-            # Create ZipInfo with fully normalized metadata
-            zinfo = zipfile.ZipInfo(filename=arcname)
-            
-            # Set fixed timestamp for reproducibility
-            if deterministic:
-                # Use fixed date (1980-01-01 00:00:00) - earliest ZIP timestamp
-                zinfo.date_time = (1980, 1, 1, 0, 0, 0)
-            else:
-                # Use actual file modification time
-                file_stat = os.stat(file_path)
-                zinfo.date_time = time.localtime(file_stat.st_mtime)[:6]
-            
-            # Set consistent file attributes regardless of OS
-            if deterministic:
-                # More robust executable detection
-                executable_extensions = {'.sh', '.py', '.pl', '.rb', '.js', '.exe', '.bat', '.cmd', '.ps1'}
-                file_ext = os.path.splitext(file_path)[1].lower()
-                
-                # For deterministic builds, use consistent logic across all platforms
-                # Check file extension first, then fall back to content-based detection
-                is_executable = file_ext in executable_extensions
-                
-                # Additional check: if file starts with shebang, it's executable
-                if not is_executable and file_data.startswith(b'#!'):
-                    is_executable = True
-                
-                # Set consistent permissions
-                if is_executable:
-                    # Executable: 755 (rwxr-xr-x)
-                    zinfo.external_attr = (0o755 & 0o777) << 16
-                else:
-                    # Regular file: 644 (rw-r--r--)
-                    zinfo.external_attr = (0o644 & 0o777) << 16
-            else:
-                # Use actual file permissions
-                file_stat = os.stat(file_path)
-                zinfo.external_attr = (file_stat.st_mode & 0o777) << 16
-            
-            # Set compression method consistently
-            zinfo.compress_type = zipfile.ZIP_DEFLATED
-            
-            # Ensure consistent compression level
-            zinfo._compresslevel = 6
-            
-            # Set the file size for consistency
-            zinfo.file_size = len(file_data)
-            
-            # Write file to ZIP with exact binary content
-            zipf.writestr(zinfo, file_data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+            zipf.write(file_path, arcname=arcname)
             print(f"Added file: {file_path} -> {arcname}")
-        
-def compare_zip_files(zip1_path, zip2_path):
-    """
-    Compare two ZIP files and show detailed differences.
-    Helps debug why ZIP files aren't identical across platforms.
-    """
-    print(f"\n=== Comparing ZIP files ===")
-    print(f"ZIP 1: {zip1_path}")
-    print(f"ZIP 2: {zip2_path}")
     
-    # Compare file sizes
-    size1 = os.path.getsize(zip1_path)
-    size2 = os.path.getsize(zip2_path)
-    print(f"\nFile sizes: {size1} vs {size2} bytes")
-    if size1 != size2:
-        print("❌ FILE SIZES DIFFER!")
-    
-    # Compare file hashes
-    with open(zip1_path, 'rb') as f1, open(zip2_path, 'rb') as f2:
-        hash1 = hashlib.sha256(f1.read()).hexdigest()
-        hash2 = hashlib.sha256(f2.read()).hexdigest()
-    
-    print(f"\nSHA256 hashes:")
-    print(f"ZIP 1: {hash1}")
-    print(f"ZIP 2: {hash2}")
-    if hash1 == hash2:
-        print("✅ Files are identical!")
-        return True
-    else:
-        print("❌ HASHES DIFFER!")
-    
-    # Compare ZIP contents in detail
-    try:
-        with zipfile.ZipFile(zip1_path, 'r') as zf1, zipfile.ZipFile(zip2_path, 'r') as zf2:
-            info1 = zf1.infolist()
-            info2 = zf2.infolist()
-            
-            print(f"\nNumber of files: {len(info1)} vs {len(info2)}")
-            
-            # Compare file lists
-            files1 = {info.filename for info in info1}
-            files2 = {info.filename for info in info2}
-            
-            if files1 != files2:
-                print("❌ FILE LISTS DIFFER!")
-                only1 = files1 - files2
-                only2 = files2 - files1
-                if only1:
-                    print(f"  Only in ZIP 1: {only1}")
-                if only2:
-                    print(f"  Only in ZIP 2: {only2}")
-            else:
-                print("✅ File lists match")
-            
-            # Create lookup dictionary for ZIP 2 files
-            info2_dict = {info.filename: info for info in info2}
-            
-            # Compare each file in detail
-            print(f"\n=== File-by-file comparison ===")
-            for info1_item in sorted(info1, key=lambda x: x.filename):
-                filename = info1_item.filename
-                info2_item = info2_dict.get(filename)
-                
-                if not info2_item:
-                    print(f"❌ {filename}: Missing in ZIP 2")
-                    continue
-                
-                print(f"\n📁 {filename}:")
-                
-                # Compare timestamps
-                if info1_item.date_time != info2_item.date_time:
-                    print(f"  ❌ Timestamps differ: {info1_item.date_time} vs {info2_item.date_time}")
-                else:
-                    print(f"  ✅ Timestamps match: {info1_item.date_time}")
-                
-                # Compare file sizes
-                if info1_item.file_size != info2_item.file_size:
-                    print(f"  ❌ File sizes differ: {info1_item.file_size} vs {info2_item.file_size}")
-                else:
-                    print(f"  ✅ File sizes match: {info1_item.file_size}")
-                
-                # Compare compressed sizes
-                if info1_item.compress_size != info2_item.compress_size:
-                    print(f"  ❌ Compressed sizes differ: {info1_item.compress_size} vs {info2_item.compress_size}")
-                else:
-                    print(f"  ✅ Compressed sizes match: {info1_item.compress_size}")
-                
-                # Compare CRC32
-                if info1_item.CRC != info2_item.CRC:
-                    print(f"  ❌ CRC32 differs: {info1_item.CRC:08x} vs {info2_item.CRC:08x}")
-                else:
-                    print(f"  ✅ CRC32 matches: {info1_item.CRC:08x}")
-                
-                # Compare external attributes (permissions)
-                if info1_item.external_attr != info2_item.external_attr:
-                    print(f"  ❌ Permissions differ: {info1_item.external_attr:08x} vs {info2_item.external_attr:08x}")
-                    print(f"    Octal: {(info1_item.external_attr >> 16) & 0o777:o} vs {(info2_item.external_attr >> 16) & 0o777:o}")
-                else:
-                    print(f"  ✅ Permissions match: {info1_item.external_attr:08x}")
-                
-                # Compare compression method
-                if info1_item.compress_type != info2_item.compress_type:
-                    print(f"  ❌ Compression methods differ: {info1_item.compress_type} vs {info2_item.compress_type}")
-                else:
-                    print(f"  ✅ Compression methods match: {info1_item.compress_type}")
-                
-                # Compare actual file content
-                try:
-                    content1 = zf1.read(filename)
-                    content2 = zf2.read(filename)
-                    
-                    if content1 != content2:
-                        print(f"  ❌ File contents differ!")
-                        print(f"    Content lengths: {len(content1)} vs {len(content2)}")
-                        
-                        # Show first few bytes if different
-                        if len(content1) > 0 and len(content2) > 0:
-                            print(f"    First 32 bytes:")
-                            print(f"    ZIP 1: {binascii.hexlify(content1[:32])}")
-                            print(f"    ZIP 2: {binascii.hexlify(content2[:32])}")
-                    else:
-                        print(f"  ✅ File contents match")
-                        
-                except Exception as e:
-                    print(f"  ❌ Error reading file contents: {e}")
-    
-    except Exception as e:
-        print(f"❌ Error comparing ZIP files: {e}")
-    
-    return False
-
-def analyze_zip_structure(zip_path):
-    """
-    Analyze and display detailed information about a ZIP file's structure.
-    """
-    print(f"\n=== Analyzing ZIP structure: {zip_path} ===")
-    
-    # File-level info
-    size = os.path.getsize(zip_path)
-    with open(zip_path, 'rb') as f:
-        content = f.read()
-        hash_val = hashlib.sha256(content).hexdigest()
-    
-    print(f"File size: {size} bytes")
-    print(f"SHA256: {hash_val}")
-    
-    # ZIP structure info
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        info_list = zf.infolist()
-        print(f"Number of files: {len(info_list)}")
-        
-        print(f"\n=== File Details ===")
-        for info in sorted(info_list, key=lambda x: x.filename):
-            print(f"\n📄 {info.filename}")
-            print(f"  Date/Time: {info.date_time}")
-            print(f"  File size: {info.file_size}")
-            print(f"  Compressed size: {info.compress_size}")
-            print(f"  CRC32: {info.CRC:08x}")
-            print(f"  External attr: {info.external_attr:08x} (perms: {(info.external_attr >> 16) & 0o777:o})")
-            print(f"  Compress type: {info.compress_type}")
-            print(f"  Header offset: {info.header_offset}")
-    
-    # Show first 128 bytes of ZIP file in hex
-    print(f"\n=== First 128 bytes (hex) ===")
-    print(binascii.hexlify(content[:128]).decode('ascii'))
-
-# Pulumi-specific usage examples:
+    return zip_filename
 
 def create_lambda_zip():
     """Create a ZIP file for AWS Lambda deployment"""
@@ -331,12 +71,11 @@ def create_lambda_zip():
     ]
     
     zip_path = "lambda_deployment.zip"
-    create_zip_with_multiple_files(zip_path, paths_to_archive, deterministic=True)
+    create_zip_with_repro_zipfile(zip_path, paths_to_archive)
     return zip_path
 
 lambda_zip_path = create_lambda_zip()
 
-compare_zip_files("lambda_deployment.zip", "lambda_deploymen_wint.zip")
 # Use in Pulumi Lambda function
 lambda_function = aws.lambda_.Function(
     "my-lambda",
